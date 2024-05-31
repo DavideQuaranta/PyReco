@@ -1,0 +1,62 @@
+P0_RM1:
+  name: TMM
+  offset: 50    # mm
+  pitch: 0.25   #mm
+  nstrips: 360    #mm
+  MinStripsInCluster: 5 #if less than two cannot fit
+  MaxStripsInCluster: 9999    # not a useful cut
+  MinClusterCharge: 100   # ADC counts
+  MinStripCharge: 60    # ADC counts
+  MaxNConsecutiveHolesInCluster : 0 #1
+  MaskedStrips:
+    - -1
+
+P2_M01:
+  name: ExMe
+  offset: 224   # mm
+  gap: 50.128   # mm
+  pitch: 0.4   #mm
+  nstrips: 1024
+  MinStripsInCluster: 8 #if less than two cannot fit    
+  MaxStripsInCluster: 9999    # not a useful cut
+  MinClusterCharge: 100   # ADC counts
+  MinStripCharge: 60    # ADC counts
+  MaxNConsecutiveHolesInCluster : 1
+  EFF_WINDOW: 999
+  MaskedStrips: 
+    - -1
+
+general:
+  verbose : True
+  show_tracks : False
+  do_time_fit: False
+  plot_apv_signals: False
+
+paths:
+  raw_dir: TestBeamMMTPC/raw/    # directory to apv raw files
+  plots_dir:  effwindow/plots/    # directory to save plots
+  histo_dir: effwindow/histos/   # directory to save histograms
+
+units:
+  length: mm
+  time: ns
+  speed: mm/ns
+  charge : ADC Counts
+
+gas:
+  name: ArCF4Iso
+  composition: (88:10:2)
+  drift_speed: 0.105    # mm/ns
+
+visualization:
+  ExMeColor = 
+
+apv:
+  nbins: 27
+  bin_width: 25   #ns
+  charge_error: 1   #to be checked
+
+
+
+
+  

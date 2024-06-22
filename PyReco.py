@@ -1,12 +1,15 @@
 import os
+import re
 import sys
 import yaml
 import pickle
 import numpy as np
-import PyMegas as mm
+import pandas as pd
 import mplhep as hep
 import uproot as root
+from tqdm import tqdm
 import matplotlib.pyplot as plt
+from PyMegas import *
 
 # number of chambers in the setup
 NCHAMBERS = 2
@@ -23,15 +26,24 @@ raw = root.open(filename)
 print("\n------------- Test Beam Reconstruction -------------")
 print(f"- opening run {run_number} from {filename}...")
 
+# Read the alignement, previously computed
+df = pd.read_csv('alignementWithStrips.txt', sep = ' ')
+TMM_offset = df.loc[df['run'] == int(run_number)]['TMM_center[mm]'].values[0]
+ExMe_offset = df.loc[df['run'] == int(run_number)]['ExMe_center[mm]'].values[0]
+print('- loaded alignement info for current run...')
 
 # Check if object exist in ROOT file
-print('- Available objects in your TFile:\n')
-print(raw.keys())
-treename = input("Insert name of object to read : ")
+print('- available objects in your TFile:')
+print(f'- {raw.keys()}')
+# treename = input("Insert name of object to read : ")
+# Get the filename with the highest number
+treename = get_highest_apv_raw(raw.keys())
+
 while treename not in raw.keys():
     print('ERROR : the object you are searching for does not exist, please try again!')
     treename = input("Insert name of object to read : ")
-print(f"- creating tree from {treename} and reading branches...")
+
+print(f"- creating tree from {treename} and reading branches... \n")
 raw_tree = raw[treename]
 
 
@@ -52,8 +64,9 @@ mmReadout = raw_tree[branch[11]].array()
 mmStrip = raw_tree[branch[12]].array()
 raw_q = raw_tree[branch[13]].array()
 
+
 # Create chambers and initialize their parameters
-TMM, ExMe = mm.CreateChambers(config, NCHAMBERS)
+TMM, ExMe = CreateChambers(config, NCHAMBERS)
 
 # Here define the histograms you want to fill
 # and initialize a dictionary that will contain them
@@ -61,6 +74,7 @@ histo_dict = {}
 chamber_keys = [TMM.GetName(), ExMe.GetName()]
 histo_keys =  [None] * NCHAMBERS
 histo_keys[0] = ['Strips', 'Charge', 'Time', 'Centroid', 'Centroid Residues', 'Cluster Size', 'NClusters', 'Cluster Charge']
+# histo_keys[0] += [name + '_1st_coord' for name in histo_keys[0]]
 histo_keys[1] = ['Strips', 'Charge', 'Time', 'Centroid', 'Centroid Residues', 'Cluster Size', 'NClusters', 'Cluster Charge', 'Theta', 'Z residues', 'Drift Speed']
 
 for i, chamb_name in enumerate(chamber_keys):
@@ -76,65 +90,81 @@ for i, chamb_name in enumerate(chamber_keys):
 TMM_hit = 0
 ExMe_hit = 0
 
-nentries = len(evt)
+nentries = int(config['general']['NMAXEVENTS']*len(evt))
+
+# this we compute once and for all
+bin = config['apv']['bin_width']
+nbins = config['apv']['nbins']
+apv_times = np.arange(0+(0.5*bin), bin*nbins+(0.5*bin), bin)
+
 
 # for loop on events
+# for i in tqdm(range(nentries)):
 for i in range(nentries):
 
-    if i%100 == 0:
-        print(f'Reading event {i}/{nentries}')
-        print(f'Progress {100*(i/nentries):.2f} %')
+    # if i%100 == 0:
+    #     print(f'Reading event {i}/{nentries}')
+    #     print(f'Progress {100*(i/nentries):.2f} %')
 
-    strips = mmStrip[i]
     charges = [max(charges) for charges in raw_q[i]]
-    chamber = mmChamber[i]
 
     TMM_strips = []
+    # TMM_strips_1st_coord = []
     ExMe_strips = []
 
     t_min_ExMe = 200
     t_max_ExMe = 500
 
-
-    for j in range(len(strips)):
-        strip = mm.Strip(strips[j], charges[j])
-        if chamber[j] == "P0_RM1":
+    for j in range(len(mmStrip[i])):
+        strip = Strip(mmStrip[i][j], charges[j])
+        max_index = np.argmax(raw_q[i][j])
+        if mmChamber[i][j] == "P0_RM1":
             strip.SetParentChamber(TMM)
             if mmReadout[i][j] == 89: # only read y coordinate      
                 if strip.isGoodStrip():
-                    strip.SetTime(25*np.argmax(raw_q[i][j])+0.5*25)
+                    strip.SetTime(25*max_index+0.5*25)
                     TMM_strips.append(strip)
-        elif chamber[j] == "P2_M01":
+            if mmReadout[i][j] == 88: # read x coordinate      
+                if strip.isGoodStrip():
+                    strip.SetTime(25*max_index+0.5*25)
+                    # TMM_strips_1st_coord.append(strip)
+        elif mmChamber[i][j] == "P2_M01":
             strip.SetParentChamber(ExMe)
-            if mmReadout[i][j] == 89: # only read y coordinate      
+            if mmReadout[i][j] == 89: # only read y coordinate    
                 if strip.isGoodStrip():
                     if config['general']['do_time_fit'] == True:
-                        strip.SetTime(mm.TimeFit(raw_q[i][j], config['general']['plot_apv_signals']))
+                        strip.SetTime(TimeFit(apv_times, raw_q[i][j], max_index, config['general']['plot_apv_signals']))
                     else:
-                        strip.SetTime(25*np.argmax(raw_q[i][j])+0.5*25)
+                        strip.SetTime(25*max_index+0.5*25)
                     
                     ExMe_strips.append(strip)
+
+                    t = strip.GetTime()
                     
-                    if strip.GetTime() > t_max_ExMe:
-                        t_max_ExMe = strip.GetTime()
-                    if strip.GetTime() < t_min_ExMe:
-                        t_min_ExMe = strip.GetTime()
+                    if t >= t_max_ExMe:
+                        t_max_ExMe = t
+                    if t < t_min_ExMe:
+                        t_min_ExMe = t
 
 
 
     histo_dict['P0_RM1']['Strips'] += [TMM_strips[k].GetID() for k in range(len(TMM_strips))]
+    # histo_dict['P0_RM1']['Strips_1st_coord'] += [TMM_strips_1st_coord[k].GetID() for k in range(len(TMM_strips_1st_coord))]
     histo_dict['P2_M01']['Strips'] += [ExMe_strips[k].GetID() for k in range(len(ExMe_strips))]
 
     histo_dict['P0_RM1']['Charge'] += [TMM_strips[k].GetCharge() for k in range(len(TMM_strips))]
+    # histo_dict['P0_RM1']['Charge_1st_coord'] += [TMM_strips_1st_coord[k].GetCharge() for k in range(len(TMM_strips_1st_coord))]
     histo_dict['P2_M01']['Charge'] += [ExMe_strips[k].GetCharge() for k in range(len(ExMe_strips))]
 
     histo_dict['P0_RM1']['Time'] += [TMM_strips[k].GetTime() for k in range(len(TMM_strips))]
+    # histo_dict['P0_RM1']['Time_1st_coord'] += [TMM_strips_1st_coord[k].GetTime() for k in range(len(TMM_strips_1st_coord))]
     histo_dict['P2_M01']['Time'] += [ExMe_strips[k].GetTime() for k in range(len(ExMe_strips))]
 
     histo_dict['P2_M01']['Drift Speed'].append(config['P2_M01']['gap']/(t_max_ExMe-t_min_ExMe))
 
-    TMMClust = mm.CreateClusters(TMM_strips)
-    ExMeClust = mm.CreateClusters(ExMe_strips)
+    TMMClust = CreateClusters(TMM_strips)
+    # TMMClust_1st_coord = CreateClusters(TMM_strips_1st_coord)
+    ExMeClust = CreateClusters(ExMe_strips)
 
     # print(f'Event {i}')
 
@@ -142,61 +172,76 @@ for i in range(nentries):
     ExMe_fitinfo = 0
     residues = []
     theta = []
-
-    if len(TMMClust) == 1 and len(ExMeClust) >= 1: 
-        TMM_fitinfo, _ , _ = mm.PlotTrackFromClusters(TMMClust, show_tracks = config['general']['show_tracks'])
-        ExMe_fitinfo, angle, res = mm.PlotTrackFromClusters(ExMeClust, show_tracks = config['general']['show_tracks'])
+    if len(TMMClust) >= 1 and len(ExMeClust) >= 1: 
+        TMM_fitinfo, _ , _ = PlotTrackFromClusters(TMMClust, show_tracks = config['general']['show_tracks'], show_fit=False) #when i don't look at plots this is useless
+        # TMM_fitinfo_1st_coord, _ , _ = PlotTrackFromClusters(TMMClust_1st_coord, show_tracks = config['general']['show_tracks'])# when i don't look at plots this is useless
+        ExMe_fitinfo, angle, res = PlotTrackFromClusters(ExMeClust, show_tracks = config['general']['show_tracks'], show_fit=True)
         residues+=res
         theta+=angle
         # plt.show()
+
         for l in range(len(TMMClust)):
-            if abs(TMMClust[l].Centroid() - config['P0_RM1']['offset']) < 3*6.60: #6.60 is the std of the tmm centroid computed on all events
+            if abs(TMMClust[l].Centroid() - TMM_offset) < 3*6.60: #3*6.60: #6.60 is the std of the tmm centroid computed on all events
                 TMM_hit += 1                
                 AlreadyFoundGoodClusterExMe = 0
                 for m in range(len(ExMeClust)):
-                    # print(f'fit info : {ExMe_fitinfo[m]}')
-                    # print(f'distance : {abs(TMMClust[l].Centroid() - config['P0_RM1']['offset'] + config['P2_M01']['offset'] - ExMeClust[m].Centroid())}')
+                    print(f'fit info : {ExMe_fitinfo[m]}')
+                    print(f"distance : {abs(TMMClust[l].Centroid() - TMM_offset + ExMe_offset - ExMeClust[m].Centroid())}")
                     if ExMe_fitinfo[m] > 0.05:
-                        if abs(TMMClust[l].Centroid() - config['P0_RM1']['offset'] + config['P2_M01']['offset'] - ExMeClust[m].Centroid()) < config['P2_M01']['EFF_WINDOW']:
+                        if abs(TMMClust[l].Centroid() - TMM_offset + ExMe_offset - ExMeClust[m].Centroid()) < config['P2_M01']['EFF_WINDOW']:
                             if AlreadyFoundGoodClusterExMe == 0:
                                 ExMe_hit += 1
                                 AlreadyFoundGoodClusterExMe = 1
-                                histo_dict['P0_RM1']['Centroid Residues'] += [TMMClust[l].Centroid() - config['P0_RM1']['offset'] + config['P2_M01']['offset'] - ExMeClust[m].Centroid()]
-                                histo_dict['P2_M01']['Centroid Residues'] += [TMMClust[l].Centroid() - config['P0_RM1']['offset'] + config['P2_M01']['offset'] - ExMeClust[m].Centroid()]
+                                histo_dict['P0_RM1']['Centroid Residues'] += [TMMClust[l].Centroid() - TMM_offset + ExMe_offset - ExMeClust[m].Centroid()]
+                                histo_dict['P2_M01']['Centroid Residues'] += [TMMClust[l].Centroid() - TMM_offset + ExMe_offset - ExMeClust[m].Centroid()]
+                                histo_dict['P2_M01']['Theta'] += [theta[m]]
+                                #tests
+                                plt.hist(histo_dict['P2_M01']['Theta'])
+                                plt.show()
+                                print(f'theta = {theta[m]}')
 
-
-    # print(f'TMM_hits : {TMM_hit} ExMe_hits : {ExMe_hit}')
+        print(f'TMM_Clust = {len(TMMClust)} | ExMe_Clust = {len(ExMeClust)}')
+        print(f'TMM_hits : {TMM_hit} ExMe_hits : {ExMe_hit}')
 
 
     # histo_dict['P0_RM1']['Clusters'].append(TMMClust)
     # histo_dict['P2_M01']['Clusters'].append(ExMeClust)
 
     histo_dict['P0_RM1']['NClusters'] += [len(TMMClust)]
+    # histo_dict['P0_RM1']['NClusters_1st_coord'] += [len(TMMClust_1st_coord)]
     histo_dict['P2_M01']['NClusters'] += [len(ExMeClust)]
 
     histo_dict['P0_RM1']['Cluster Charge'] += [TMMClust[k].GetTotalCharge() for k in range(len(TMMClust))]
+    # histo_dict['P0_RM1']['Cluster Charge_1st_coord'] += [TMMClust_1st_coord[k].GetTotalCharge() for k in range(len(TMMClust_1st_coord))]
     histo_dict['P2_M01']['Cluster Charge'] += [ExMeClust[k].GetTotalCharge() for k in range(len(ExMeClust))]
 
     histo_dict['P0_RM1']['Cluster Size'] += [TMMClust[k].Size() for k in range(len(TMMClust))]
+    # histo_dict['P0_RM1']['Cluster Size_1st_coord'] += [TMMClust_1st_coord[k].GetTotalCharge() for k in range(len(TMMClust_1st_coord))]
     histo_dict['P2_M01']['Cluster Size'] += [ExMeClust[k].Size() for k in range(len(ExMeClust))]
 
     TMMCentroid = [TMMClust[k].Centroid() for k in range(len(TMMClust))]
+    # TMMCentroid_1st_coord = [TMMClust_1st_coord[k].Centroid() for k in range(len(TMMClust_1st_coord))]
     ExMeCentroid = [ExMeClust[k].Centroid() for k in range(len(ExMeClust))]
     histo_dict['P0_RM1']['Centroid'] += TMMCentroid
+    # histo_dict['P0_RM1']['Centroid_1st_coord'] += TMMCentroid_1st_coord
     histo_dict['P2_M01']['Centroid'] += ExMeCentroid
 
     histo_dict['P2_M01']['Z residues'] += residues
-    histo_dict['P2_M01']['Theta'] += theta
+    # histo_dict['P2_M01']['Theta'] += theta
 
 
 
-print(f'Clusters created for run {run_number}...')
+print(f'\nClusters created for run {run_number}...')
 
-efficiency = ExMe_hit/TMM_hit
-efficiency_error = np.sqrt(efficiency*(1-efficiency))/np.sqrt(TMM_hit)
-
-print(f'Efficiency = {efficiency} +/- {efficiency_error}')
-
+if TMM_hit == 0:
+    print('TMM_hit = 0 : Could not compute efficiency!')
+elif TMM_hit >= 1:
+    efficiency = ExMe_hit/TMM_hit
+    efficiency_error = np.sqrt(efficiency*(1-efficiency))/np.sqrt(TMM_hit)
+    print(f'Efficiency = {efficiency:.3f} +/- {efficiency_error:.3f}')
+    with open('efficiency.txt', 'a') as file:
+        file.write(f'{run_number} {efficiency} {efficiency_error}\n')
+    
 
 
 plots_dir = config['paths']['plots_dir'] + run_number + '/'
@@ -218,22 +263,27 @@ if not os.path.exists(histo_dir):
 
 
 xlabels = ['Strip ID', 'Charge [ADC Counts]', 'Time [ns]', 'Centroid [mm]', 'Centroid Residues [mm]', 'Cluster Size', 'NClusters', 'Cluster Charge [ADC Counts]']
+# xlabels += [name + '_1st_coord' for name in xlabels]
 
 for i,key in enumerate(histo_keys[0]):
     plt.hist(histo_dict[chamber_keys[0]][key], bins = 100, histtype= 'step', label = chamber_keys[0])
+    # if i < 7:
     plt.hist(histo_dict[chamber_keys[1]][key], bins = 100, histtype= 'step', label = chamber_keys[1])
     plt.xlabel(xlabels[i])
     plt.ylabel("Entries")
     plt.legend()
     with open(histo_dir+key+chamber_keys[0]+'.pkl', 'wb') as file:
         pickle.dump(histo_dict[chamber_keys[0]][key], file)
+    # if i < 7:
     with open(histo_dir+key+chamber_keys[1]+'.pkl', 'wb') as file:
         pickle.dump(histo_dict[chamber_keys[1]][key], file)
     plt.savefig(plots_dir+key+'.pdf')
-    plt.show()
+    # plt.show()
+    plt.close()
+    
 
 xlabels = ['Theta [deg]', '[mm]', 'Drift Speed [mm/ns]']
-for i, key in enumerate(histo_keys[1][-3:-1]):
+for i, key in enumerate(histo_keys[1][8:11]):
     plt.hist(histo_dict[chamber_keys[1]][key], bins = 30, histtype= 'step', label = chamber_keys[1])
     plt.xlabel(xlabels[i])
     plt.ylabel("Entries")
@@ -241,7 +291,8 @@ for i, key in enumerate(histo_keys[1][-3:-1]):
     with open(histo_dir+key+chamber_keys[1]+'.pkl', 'wb') as file:
         pickle.dump(histo_dict[chamber_keys[1]][key], file)
     plt.savefig(plots_dir+key+'.pdf')
-    plt.show()
+    # plt.show()
+    plt.close()
 
 
 

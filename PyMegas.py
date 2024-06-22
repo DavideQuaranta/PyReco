@@ -5,10 +5,31 @@ from scipy.stats import chi2
 from sklearn.cluster import DBSCAN
 from scipy.optimize import curve_fit
 from scipy.optimize import OptimizeWarning
+from numba import njit
+import re
+import time
 
 # Read the configuration file
 with open('config.yaml', 'r') as file:
     config = yaml.safe_load(file)
+
+# Finds the right TTree in the TFile
+def get_highest_apv_raw(filenames):
+    
+    # Regular expression to match filenames of the pattern apv_raw{i}
+    pattern = re.compile(r'apv_raw;(\d+)')
+    max_number = -1
+    highest_filename = None
+    
+    for filename in filenames:
+        match = pattern.match(filename)
+        if match:
+            number = int(match.group(1))
+            if number > max_number:
+                max_number = number
+                highest_filename = filename
+    
+    return highest_filename
 
 
 class Gas:
@@ -27,8 +48,8 @@ class Gas:
         return self.drift_speed
     
     def Print(self):
-        print(f'Gas : {self.name} {self.composition}')
-        print(f' - drift velocity : {self.drift_speed} {config['units']['speed']}')
+        print(f"Gas : {self.name} {self.composition}")
+        print(f" - drift velocity : {self.drift_speed} {config['units']['speed']}")
 
 
 class Chamber:
@@ -140,8 +161,8 @@ class Strip:
     
     def isGoodStrip(self):
         if self.charge >= self.chamber.GetMinStripCharge():
-            if self.id not in self.chamber.GetMaskedStrips():
-                return True
+            # if self.id not in self.chamber.GetMaskedStrips():
+            return True
         else:
             return False
     
@@ -206,11 +227,14 @@ class Cluster:
             sum+=self.__strips[i].GetID()
         return sum/self.Size()
     
+    # def GetTotalCharge(self):
+    #     qtot = 0
+    #     for i in range(self.Size()):
+    #         qtot+= self.__strips[i].GetCharge()
+    #     return qtot  
+
     def GetTotalCharge(self):
-        qtot = 0
-        for i in range(self.Size()):
-            qtot+= self.__strips[i].GetCharge()
-        return qtot   
+        return np.sum([strip.GetCharge() for strip in self.__strips]) 
     
     def GetDeltaT(self):
         t_min = 1000
@@ -223,14 +247,20 @@ class Cluster:
                 t_max = t
         return t_max - t_min + 0.00000000000001
 
+    # def Centroid(self):
+    #     qtot = 0
+    #     centroid = 0
+    #     pitch = self.ParentChamber().GetPitch()
+    #     for i in range(self.Size()):
+    #         qtot+= self.__strips[i].GetCharge()
+    #         centroid += self.__strips[i].GetCharge() * (self.__strips[i].GetID()*pitch)
+    #         return centroid/qtot  
+
     def Centroid(self):
-        qtot = 0
-        centroid = 0
         pitch = self.ParentChamber().GetPitch()
-        for i in range(self.Size()):
-            qtot+= self.__strips[i].GetCharge()
-            centroid += self.__strips[i].GetCharge() * (self.__strips[i].GetID()*pitch)
-            return centroid/qtot     
+        qtot = np.sum([strip.GetCharge() for strip in self.__strips])
+        centroid = np.sum([strip.GetCharge() * (strip.GetID()*pitch) for strip in self.__strips])
+        return centroid/qtot if qtot != 0 else 0  # Avoid division by zero   
     
     def GetAllStrips(self):
         return self.__strips
@@ -242,6 +272,7 @@ class Cluster:
         print(f"Cluster size = {len(self.__strips)}")
         for i in range(len(self.__strips)):
             self.__strips[i].Print()
+
 
 
 def neighbor_distance(strip1, strip2):
@@ -272,15 +303,19 @@ def CreateClusters(strips):
 
     return goodclusters
 
+# def FindHighestCluster(clusters):
+#     charge = 0
+#     highest_cluster = 0
+#     for i in range(len(clusters)):
+#         if clusters[i].GetTotalCharge() > charge:
+#             highest_cluster = clusters[i]
+#     return highest_cluster
+
 def FindHighestCluster(clusters):
-    charge = 0
-    highest_cluster = 0
-    for i in range(len(clusters)):
-        if clusters[i].GetTotalCharge() > charge:
-            highest_cluster = clusters[i]
+    highest_cluster = max(clusters, key=lambda cluster: cluster.GetTotalCharge())
     return highest_cluster
 
-
+@njit
 def line(x, m, q):
     return m*x + q
 
@@ -292,17 +327,27 @@ def line(x, m, q):
     - slop: defines the steepness of the rise
     - shift: represents the charge baseline'''
 
+@njit
 def FermiDirac(x, max, thalf, slope, shift):
     return (max/(1+np.exp(-(x-thalf)/slope))) + shift
+
+@njit
+def fermi_dirac_jacobian(x, max, thalf, slope, shift):
+    exp_term = np.exp((x - thalf) / slope)
+    df_dmu = -max * exp_term / (slope * (1 + exp_term) ** 2)
+    df_dkT = max * (x - thalf) * exp_term / (slope ** 2 * (1 + exp_term) ** 2)
+    df_dA = 1 / (1 + exp_term)
+    df_dB = np.ones_like(x)
+    return np.column_stack((df_dmu, df_dkT, df_dA, df_dB))
 
 # def Moyal(x, a, m, s, base):
 
 
-def TimeFit(apv_signal, plot_apv_signal = False):
-    bin = config['apv']['bin_width']
-    nbins = config['apv']['nbins']
-    maxindex = np.argmax(apv_signal)
-    apv_times = np.arange(0+(0.5*bin), bin*nbins+(0.5*bin), bin)
+def TimeFit(apv_times, apv_signal, maxindex, plot_apv_signal = False):
+    # bin = config['apv']['bin_width']
+    # nbins = config['apv']['nbins']
+    # maxindex = np.argmax(apv_signal)
+    # apv_times = np.arange(0+(0.5*bin), bin*nbins+(0.5*bin), bin)
     q_error = np.repeat(config['apv']['charge_error'], len(apv_signal))
 
     '''If the number of points to fit is lower than the 
@@ -312,38 +357,39 @@ def TimeFit(apv_signal, plot_apv_signal = False):
     t = 0
     err_t = 0
 
-    bounds = ((1, 1, 1, -10),(5000,1000,1000,100))
+    bounds = ((1, 1, 1, -10),(3000,1000,100,200))
     if maxindex > 3:
-        try:           
-            par,cov = curve_fit(FermiDirac, apv_times[0:maxindex], apv_signal[0:maxindex], p0=(1000, 300, 50, 0), bounds=bounds, absolute_sigma=True, sigma = q_error[0:maxindex])
+        try:
+            par,cov = curve_fit(FermiDirac, apv_times[0:maxindex], apv_signal[0:maxindex], p0=(apv_signal[maxindex], maxindex, 50, 0), bounds=bounds, absolute_sigma=True, sigma = q_error[0:maxindex], jac = fermi_dirac_jacobian)
             t = par[1]
             err_t = np.sqrt(cov[1][1])
             if plot_apv_signal==True:
-                plt.plot(apv_times,apv_signal, marker = 's')
-                plt.xlabel(f'Time [{config['units']['time']}]')
-                plt.ylabel(f'Charge [{config['units']['charge']}]')
-                plt.vlines(t,0, 1000)
-                plt.axvspan(t-err_t, t+err_t, alpha = 0.5)    
+                plt.plot(apv_times,apv_signal, marker = 's', alpha = 0.6)
+                plt.xlabel(f"Time [{config['units']['time']}]")
+                plt.ylabel(f"Charge [{config['units']['charge']}]")
+                plt.vlines(t,0, 1000, color = 'darkgrey', lw = 2)
+                plt.axvspan(t-err_t, t+err_t, alpha = 0.5)
+                plt.plot(apv_times, FermiDirac(apv_times, *par), color = 'red', lw = 2, alpha = 0.7)    
                 plt.show()   
             return t
         except (RuntimeError, RuntimeWarning, OptimizeWarning) as e:
-            t = 25*np.argmax(apv_signal) + 0.5*25
+            t = 25*maxindex + 0.5*25
             err_t = 25/2
             if plot_apv_signal==True:
                 plt.plot(apv_times,apv_signal, marker = 's')
-                plt.xlabel(f'Time [{config['units']['time']}]')
-                plt.ylabel(f'Charge [{config['units']['charge']}]')
+                plt.xlabel(f"Time [{config['units']['time']}]")
+                plt.ylabel(f"Charge [{config['units']['charge']}]")
                 plt.vlines(t,0, 1000)
                 plt.axvspan(t-err_t, t+err_t, alpha = 0.5)
                 plt.show()       
             return t
     else:
-        t = 25*np.argmax(apv_signal) + 0.5*25
+        t = 25*maxindex + 0.5*25
         err_t = 25/2
         if plot_apv_signal==True:
             plt.plot(apv_times,apv_signal, marker = 's')
-            plt.xlabel(f'Time [{config['units']['time']}]')
-            plt.ylabel(f'Charge [{config['units']['charge']}]')
+            plt.xlabel(f"Time [{config['units']['time']}]")
+            plt.ylabel(f"Charge [{config['units']['charge']}]")
             plt.vlines(t,0, 1000)
             plt.axvspan(t-err_t, t+err_t, alpha = 0.5)
             plt.show()       
@@ -354,9 +400,9 @@ def TimeFit(apv_signal, plot_apv_signal = False):
 
 
 
-def PlotTrackFromClusters(clusters, show_tracks = False):
+def PlotTrackFromClusters(clusters, show_tracks = False, show_fit = False):
 
-    scaling_factor = 0.3 #only for plotting purposes
+    scaling_factor = 0.3 #only for plotting purposes, scales the dimension of markers
     chamber = clusters[0].ParentChamber()
 
     pitch = chamber.GetPitch()
@@ -375,9 +421,17 @@ def PlotTrackFromClusters(clusters, show_tracks = False):
         ids = [strip.GetID() for strip in clusters[i].GetAllStrips()]
         z = [strip.GetTime()*drift_velocity for strip in clusters[i].GetAllStrips()]
         charges = [strip.GetCharge()*scaling_factor for strip in clusters[i].GetAllStrips()]
+        err_z = [2*25*drift_velocity for i in range(len(ids))] #the factor 2 is a test
 
-        err_z = np.repeat(25*drift_velocity, len(ids))
-        par, cov, fit_info, msg, ier = curve_fit(line, np.array(ids)*pitch, z, sigma = err_z, absolute_sigma = True, full_output=True) 
+
+        x = np.array(ids)*pitch
+        z = np.array(z)
+        err_z_arr = np.array(err_z)
+
+        # cut = (z > 20) & (z < 50) 
+
+
+        par, cov, fit_info, msg, ier = curve_fit(line, x, z, sigma = err_z_arr, absolute_sigma = True, full_output=True) 
         residues += list(fit_info['fvec']*err_z)
         thetas += [90 + (np.arctan(par[0]))*(180/np.pi)]
         chi_sq = np.sum(np.array(fit_info['fvec'])**2)
@@ -385,17 +439,32 @@ def PlotTrackFromClusters(clusters, show_tracks = False):
 
         if show_tracks == True:
             plt.scatter(np.array(ids)*pitch, z, marker = 'o', edgecolor = 'royalblue', alpha = 0.5, color = 'lightskyblue', linewidth = 2,s = charges, label = 'Charge Deposit')
-            plt.plot(np.array([max(ids), min(ids)])*pitch, line(np.array([max(ids), min(ids)])*pitch, *par), color = 'midnightblue', label = 'Best Fit')
+            # plt.plot(np.array([max(ids), min(ids)])*pitch, line(np.array([max(ids), min(ids)])*pitch, *par), color = 'midnightblue', label = 'Best Fit')
+            if show_fit == True:
+                plt.plot(np.array([max(x), min(x)]), line(np.array([max(x), min(x)]), *par), color = 'midnightblue', label = 'Best Fit')
             plt.xlabel('x [mm]')
             plt.ylabel('z [mm]')
-            plt.legend()
+            # plt.legend()
+
+        # if len(z[cut]) >= 2 :
+        #     par, cov, fit_info, msg, ier = curve_fit(line, x[cut], z[cut], sigma = err_z_arr[cut], absolute_sigma = True, full_output=True) 
+        #     residues += list(fit_info['fvec']*err_z_arr[cut])
+        #     thetas += [90 + (np.arctan(par[0]))*(180/np.pi)]
+        #     chi_sq = np.sum(np.array(fit_info['fvec'])**2)
+        #     pvalue.append(1-chi2.cdf(chi_sq, len(ids)-2))
+
+        #     if show_tracks == True:
+        #         plt.scatter(np.array(ids)*pitch, z, marker = 'o', edgecolor = 'royalblue', alpha = 0.5, color = 'lightskyblue', linewidth = 2,s = charges, label = 'Charge Deposit')
+        #         # plt.plot(np.array([max(ids), min(ids)])*pitch, line(np.array([max(ids), min(ids)])*pitch, *par), color = 'midnightblue', label = 'Best Fit')
+        #         plt.plot(np.array([max(x[cut]), min(x[cut])]), line(np.array([max(x[cut]), min(x[cut])]), *par), color = 'midnightblue', label = 'Best Fit')
+        #         plt.xlabel('x [mm]')
+        #         plt.ylabel('z [mm]')
+        #         plt.legend()
             
     
     plt.show()
 
     return pvalue, thetas, residues 
-
-
 
 
 

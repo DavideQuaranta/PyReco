@@ -3,9 +3,8 @@ P0_RM1:
   offset: 40    # mm
   pitch: 0.25   #mm
   nstrips: 360    #mm
-  nlayers: 2
-  reconstruct_x: True
-  reconstruct_y: True
+  layers: 0
+  readouts: 88, 89
   min_strips_in_cluster: 5 #if less than two cannot fit
   max_strips_in_cluster: 9999    # not a useful cut
   min_cluster_charge: 100   # ADC counts
@@ -13,18 +12,16 @@ P0_RM1:
   max_n_consecutive_holes_in_cluster : 10 #1
   do_time_fit : False
   masked_strips:
-    - -1
-    - -2
+    - -1    # first strip to mask
+    - -2    # last strip
 
 P2_M01:
   name: ExMe
-  offset: 224   # mm
   gap: 50.128   # mm
   pitch: 0.4   #mm
   nstrips: 1024
-  nlayers: 1
-  reconstruct_x: True
-  reconstruct_y: False
+  layers: 0
+  readouts: 89
   min_strips_in_cluster: 8 #if less than two cannot fit    
   max_strips_in_cluster: 9999    # not a useful cut
   min_cluster_charge: 100   # ADC counts
@@ -37,8 +34,8 @@ P2_M01:
     - -2
 
 general:
-  verbose : True
-  NMAXEVENTS : 1 # fraction of events to process
+  verbose : False
+  max_events : 1 # fraction of events to process
   show_tracks : False
   do_time_fit: True
   plot_apv_signals: False
@@ -67,9 +64,6 @@ apv:
   bin_width: 25   #ns
   charge_error: 1   #to be checked
 
-mapping:
-  x_readout_id: 89 # id of mmReadout used for x coordinate
-  y_readout_id: 88 # id of mmReadout used for x coordinate
 
 
 

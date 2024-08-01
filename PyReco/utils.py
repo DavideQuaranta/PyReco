@@ -1,4 +1,5 @@
 import yaml
+import awkward as ak
 
 def read_configuration_file(name: str) -> dict[str, str]:
     """
@@ -26,6 +27,13 @@ def read_configuration_file(name: str) -> dict[str, str]:
 
     return config
 
+
+def print_event(evt):
+    keys = ak.fields(evt)
+    print(f"####### EVENT {evt[keys[0]]} #######")
+    for key in keys[1:]:
+        print(f"- {key} : {evt[key]}")
+            
 
 
 if __name__ == "__main__":

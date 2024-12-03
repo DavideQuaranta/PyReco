@@ -1,0 +1,69 @@
+P0_RM1:                       # chamber name in root file
+  name: TMM                   # chamber name in code and on plots
+  offset: 37.162              # mm (chamber alignment, i compute in code now but if measured put it here)
+  pitch: 0.25                 # mm (strip pitch)
+  nstrips: 360                # number of strips
+  MinStripsInCluster: 5       # if less than two cannot fit
+  MaxStripsInCluster: 9999    # not a useful cut
+  MinClusterCharge: 100       # ADC counts
+  MinStripCharge: 60          # ADC counts
+  MaxStripCharge: 9999        # ADC counts
+  MaxNConsecutiveHolesInCluster : 10 # max number of holes allowed in clusters
+  MaskedStrips:                      # strips to exclude, for now they should be put one by one
+    - -1
+    - -2
+
+P2_M01:                              # for now the tilted chamber has more parameters, my fault, in my idea each chamber should have the same ones
+  name: ExMe
+  offset: 212.774                    # mm
+  gap: 50.128                        # mm (drift gap size)
+  pitch: 0.4                         # mm
+  nstrips: 1024
+  MinStripsInCluster: 8              # if less than two cannot fit    
+  MaxStripsInCluster: 9999           # not a useful cut
+  MinClusterCharge: 100              # ADC counts
+  MinStripCharge: 60                 # ADC counts
+  MaxStripCharge: 1800               # ADC counts
+  MaxNConsecutiveHolesInCluster : 10
+  EFF_WINDOW: 50                     # mm (the ExMe cluster is good if its between +/- EFF_WINDOW with respect to TMM cluster)
+  min_pvalue_for_good_track: 0.9     # cut on the p-value of the fitted track in ExMe (i started with 0.05)
+  MaskedStrips: 
+    - -1
+    - -1
+
+general:
+  verbose : False                   # prints informations on terminal at startup
+  NMAXEVENTS : 1                    # fraction of events to process
+  show_tracks : False               # for debug purpose, shows the fits on each cluster
+  do_time_fit: True                 # compute the strip time with fermi-dirac fit (veryyy slow, use with care!)
+  plot_apv_signals: False           # for debug purposes, show the fit on raw apv signals
+
+paths:
+  raw_dir: TestBeamMMTPC/raw/       # directory to apv raw files
+  output_dir: reco_spatres2/        # where to save output
+  plots_dir:  reco_spatres2/plots/  # directory to save plots
+  histo_dir: reco_spatres2/histos/  # directory to save histograms
+
+units:
+  length: mm                        # length units to use in plots
+  time: ns                          # time units to use in plots
+  speed: mm/ns                      # speed units to use in plots
+  charge : ADC Counts               # charge units to use in plots
+
+gas:
+  name: ArCF4Iso                    # gas mixture name
+  composition: (88:10:2)            # mass percentage composition
+  drift_speed: 0.105                # mm/ns (drift speed)
+
+visualization:                      # visualization settings (to be implemented)
+  ExMeColor = 
+
+apv:                                # description of APV signals
+  nbins: 27                         # number of APV signal bins
+  bin_width: 25                     # length of bins in ns
+  charge_error: 1                   # error on charge (copied from TBReco to be checked)
+
+
+
+
+  

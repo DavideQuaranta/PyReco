@@ -1,7 +1,0 @@
-{
-    "files.associations": {
-        "fit_apv_times.C": "cpp",
-        "TimeFit.C": "cpp",
-        "apv_raw.C": "cpp"
-    }
-}

@@ -35,14 +35,16 @@ general:
   verbose : False                   # prints informations on terminal at startup
   NMAXEVENTS : 1                    # fraction of events to process
   show_tracks : False               # for debug purpose, shows the fits on each cluster
-  do_time_fit: True                 # compute the strip time with fermi-dirac fit (veryyy slow, use with care!)
+  do_time_fit: False                # compute the strip time with fermi-dirac fit (not implemented anymore)
   plot_apv_signals: False           # for debug purposes, show the fit on raw apv signals
 
 paths:
-  raw_dir: TestBeamMMTPC/raw/       # directory to apv raw files
-  output_dir: reco_spatres2/        # where to save output
-  plots_dir:  reco_spatres2/plots/  # directory to save plots
-  histo_dir: reco_spatres2/histos/  # directory to save histograms
+  raw_dir: data/raw/       # directory to apv raw files
+  timefit_dir: data/timefit/       # directory to apv raw files
+  output_dir: output/        # where to save output
+  plots_dir:  output/plots/  # directory to save plots
+  histo_dir:  output/histos/  # directory to save histograms
+  results_dir:  output/results/  # directory to save histograms
 
 units:
   length: mm                        # length units to use in plots
